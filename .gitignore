@@ -1,0 +1,8 @@
+*
+!my_ml_dsa.py
+!/dilithium-py/
+!/dilithium-py/src/
+!/dilithium-py/src/dilithium_py/
+!/dilithium-py/src/dilithium_py/ml_dsa/
+!dilithium-py/src/dilithium_py/ml_dsa/ml_dsa.py
+!.gitignore
