@@ -6,6 +6,8 @@ try:
 except ImportError:
     from ..shake.shake_wrapper import shake256
 
+def b2i(val: bytearray) -> str:
+    return int.from_bytes(val, 'big')
 
 class ML_DSA:
     def __init__(self, parameter_set):
@@ -197,9 +199,13 @@ class ML_DSA:
 
         # Split bytes into suitable chunks
         rho, rho_prime, K = seed_bytes[:32], seed_bytes[32:96], seed_bytes[96:]
+        print(f'rho: {b2i(rho):032x}')
+        print(f'rho_p: {b2i(rho_prime):064x}')
+        print(f'K: {b2i(K):032x}')
 
         # Generate matrix A ∈ R^(kxl) in the NTT domain
         A_hat = self._expand_matrix_from_seed(rho)
+        print(A_hat)
 
         # Generate the error vectors s1 ∈ R^l, s2 ∈ R^k
         s1, s2 = self._expand_vector_from_seed(rho_prime)
@@ -325,6 +331,7 @@ class ML_DSA:
         Algorithm 1 (FIPS 204)
         """
         zeta = self.random_bytes(32)
+        print(f'xi: {b2i(zeta):x}')
         pk, sk = self._keygen_internal(zeta)
         return pk, sk
 
