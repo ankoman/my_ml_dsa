@@ -205,7 +205,6 @@ class ML_DSA:
 
         # Generate matrix A ∈ R^(kxl) in the NTT domain
         A_hat = self._expand_matrix_from_seed(rho)
-        print(A_hat)
 
         # Generate the error vectors s1 ∈ R^l, s2 ∈ R^k
         s1, s2 = self._expand_vector_from_seed(rho_prime)
@@ -220,6 +219,8 @@ class ML_DSA:
         pk = self._pack_pk(rho, t1)
         tr = self._h(pk, 64)
         sk = self._pack_sk(rho, K, tr, s1, s2, t0)
+        print(f'pk: {b2i(pk):x}')
+        print(f'tr: {b2i(tr):x}')
 
         return pk, sk
 
