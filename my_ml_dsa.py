@@ -25,9 +25,8 @@ zetas = [0, 4808194, 3765607, 3761513, 5178923, 5496691, 5234739, 5178987, 77787
 ### Testvector generation
 print("### Test vector generation ###")
 pk, sk = ML_DSA_44.keygen()
-# print(pk)
-# msg = b"Your message signed by ML_DSA"
-# sig = ML_DSA_44.sign(sk, msg)
+msg = b"Your message signed by ML_DSA"
+sig = ML_DSA_44.sign(sk, msg)
 # assert ML_DSA_44.verify(pk, msg, sig)
 
 # # Verification will fail with the wrong msg or pk
@@ -66,8 +65,7 @@ def coeffFromHalfByte(b: int, eta: int) -> int or None: # type: ignore
     return None
 
 def integerToBits(x: int, alpha: int):
-    ### alpha is fixed to 10
-    return int(f'{x:010b}'[::-1], 2) ### Bit reverse
+    return int(bin(x)[2:].zfill(alpha)[::-1], 2) ### Bit reverse
 
 def bitsToBytes(y: int) -> bytearray:
     ba = bytearray()
@@ -165,6 +163,24 @@ class polyRing:
 
         return r1_poly, r0_poly
 
+    def decompose(self, alpha: int) -> (polyRing, polyRing): # type: ignore
+        r0_poly = self.__class__()
+        r1_poly = self.__class__()
+
+        for i in range(self.n):
+            rp = self.coeff[i] % self.q
+            r0 = rp % (2*alpha)
+            r0 = r0 - 2*alpha if r0 > alpha else r0
+            if rp - r0 == self.q - 1:
+                r1 = 0
+                r0 = r0 - 1
+            else:
+                r1 = (rp - r0) // (alpha << 1)
+            r0_poly.coeff[i] = r0
+            r1_poly.coeff[i] = r1
+
+        return r1_poly, r0_poly
+    
     def simpleBitPack(self, bitlen: int) -> bytearray:
         ### bitlen is bitlen b
         z = 0
@@ -176,13 +192,25 @@ class polyRing:
         return bitsToBytes(z)
 
     def bitPack(self, b: int, bitlen: int) -> bytearray:
-        ### b is bitlen b
         z = 0
         for coeff in reversed(self.coeff):
             z <<= bitlen
             z |= b - coeff
 
         return z.to_bytes((bitlen*256)//8, 'little')
+    
+    @staticmethod
+    def bitUnpack(ba: bytearray, b: int, bitlen: int):
+        z = int.from_bytes(ba, 'little')
+        poly = polyRing()
+        mask = 2**bitlen - 1
+
+        for i in range(256):
+            coeff = b - (z & mask)
+            poly.coeff[i] = coeff
+            z >>= bitlen
+
+        return poly
     
     def ntt(self):
         ntt = polyRing()
@@ -230,14 +258,16 @@ class my_ml_dsa:
         self.d = 13  # number of bits dropped from t
         self.tau = 39  # number of ±1 in c
         self.gamma_1 = 131072  # coefficient range of y: 2^17
-        self.gamma_2 =  95232  # low order rounding range: (q-1)/88
+        self.bitlen_gamma_1 = 17
+        self.gamma_2 = 95232  # low order rounding range: (q-1)/88
+        self.bitlen_w1 = len(bin(((self.q-1) // (2*self.gamma_2)) - 1)) - 2 # 6 or 5
         self.k = 4  # Dimensions of A = (k, l)
         self.l = 4  # Dimensions of A = (k, l)
         self.eta = 2  # Private key range
         self.omega = 80  # Max number of ones in hint
         self.c_tilde_bytes = 32
 
-    def expandA(self, rho: bytearray):
+    def expandA(self, rho: bytearray) -> List(polyRing): # type: ignore
         A_hat = []
         for r in range(self.k):
             list_t =[]
@@ -248,13 +278,30 @@ class my_ml_dsa:
 
         return A_hat
 
-    def expandS(self, rho: bytearray):
+    def expandS(self, rho: bytearray) -> List(polyRing): # type: ignore
         s1 = [polyRing.rejBoundedPoly(rho + int.to_bytes(r, 2, 'little'), self.eta) for r in range(self.l)]
         s2 = [polyRing.rejBoundedPoly(rho + int.to_bytes(r + self.l, 2, 'little'), self.eta) for r in range(self.k)]
 
         return s1, s2
 
-    def pkEncode(self, rho: bytearray, t1: List(List(int))) -> bytearray: # type: ignore
+    def expandMask(self, rho: bytearray, mu: bytearray) -> List(polyRing): # type: ignore
+        c = self.bitlen_gamma_1 + 1 ### 18 or 20
+        y = []
+        for r in range(self.l):
+            rho_p = rho + int.to_bytes(mu + r, 2, 'little')
+            v = hash_H(rho_p, 32*c)
+            y.append(polyRing.bitUnpack(v, self.gamma_1, c))
+
+        return y
+
+    def w1Encode(self, w1: List(polyRing)) -> bytearray: # type: ignore
+        w1_tilde = bytearray()
+        for i in range(self.k):
+            w1_tilde += w1[i].simpleBitPack(self.bitlen_w1)
+        print(w1_tilde)
+        return w1_tilde
+    
+    def pkEncode(self, rho: bytearray, t1: List(polyRing)) -> bytearray: # type: ignore
         pk = rho
         for i in range(self.k):
             pk += t1[i].simpleBitPack(10)
@@ -263,13 +310,39 @@ class my_ml_dsa:
     
     def skEncode(self, rho: bytearray, K: bytearray, tr: bytearray, s1: List(polyRing), s2: List(polyRing), t0: List(List(int))) -> bytearray: # type: ignore
         sk = rho + K + tr
+        bitlen = 3 if self.eta == 2 else 4 if self.eta == 4 else None
+
         for i in range(self.l):
-            sk += s1[i].bitPack(self.eta, 3)
+            sk += s1[i].bitPack(self.eta, bitlen)
         for i in range(self.k):
-            sk += s2[i].bitPack(self.eta, 3)
+            sk += s2[i].bitPack(self.eta, bitlen)
         for i in range(self.k):
             sk += t0[i].bitPack(2**12, 13)
+
         return sk
+
+    def skDecode(self, sk: bytearray):
+        rho, K, tr = sk[:32], sk[32:64], sk[64:128]
+
+        s_bytes = 96 if self.eta == 2 else 128
+        s1_offset = 128
+        s2_offset = 128 + self.l * s_bytes
+        t0_offset = 128 + 2*(self.l * s_bytes)
+        bitlen = 3 if self.eta == 2 else 4 if self.eta == 4 else None
+
+        s1 = [polyRing.bitUnpack(sk[s1_offset+i*s_bytes:], self.eta, bitlen) for i in range(self.l)]
+        s2 = [polyRing.bitUnpack(sk[s2_offset+i*s_bytes:], self.eta, bitlen) for i in range(self.k)]
+        t0 = [polyRing.bitUnpack(sk[t0_offset+i*416:], 2**12, 13) for i in range(self.k)]
+
+        return rho, K, tr, s1, s2, t0
+
+
+    def matrix_vector_mult(self, mat: List(List(polyRing)), vec: List(polyRing)) -> List(polyRing): # type: ignore
+        prod = [polyRing() for x in range(self.k)]
+        for i in range(self.k):
+            for j in range(self.l):
+                prod[i] = prod[i] + (mat[i][j] @ vec[j])
+        return prod
 
     def _keygen_internal(self, xi: int):
         hash_in = i2b(xi) + self.k.to_bytes(1, 'little') + self.l.to_bytes(1, 'little')
@@ -284,13 +357,10 @@ class my_ml_dsa:
         s1, s2 = self.expandS(rho_p)
         s1_hat = [x.ntt() for x in s1]
 
-        # Matrix-vector multiplication
-        As = [polyRing() for x in range(self.k)]
-        for i in range(self.k):
-            for j in range(self.l):
-                As[i] = As[i] + (A_hat[i][j] @ s1_hat[j])
+        As = self.matrix_vector_mult(A_hat, s1_hat)
         t = [As[i].intt() + s2[i] for i in range(self.k)]
 
+        ### Power2Round
         t0 = []
         t1 = []
         for poly in t:
@@ -307,10 +377,51 @@ class my_ml_dsa:
 
         return pk, sk
 
+    def _sign_internal(self, sk: bytearray, Mp: bytearray, rnd: int):
+        rho, K, tr, s1, s2, t0 = self.skDecode(sk)
+        s1_hat = [x.ntt() for x in s1]
+        s2_hat = [x.ntt() for x in s2]
+        t0_hat = [x.ntt() for x in s2]
+        A_hat = self.expandA(rho)
+        mu = hash_H(tr + Mp, 64)
+        rho_pp = hash_H(K + i2b(rnd) + mu, 64)
+
+        kappa = 0
+        z, h = None, None
+        while z is None and h is None:
+            y = self.expandMask(rho_pp, kappa)
+            y_hat = [elem.ntt() for elem in y]
+            w_hat = self.matrix_vector_mult(A_hat, y_hat)
+            w = [elem.intt() for elem in w_hat]
+
+            ### HighBits
+            w1 = []
+            for poly in w:
+                w1_poly, w0_poly = poly.decompose(self.gamma_2)
+                w1.append(w1_poly)
+
+            c_tilde = hash_H(mu + self.w1Encode(w1), self.c_tilde_bytes)
+            print(c_tilde)
+            kappa += self.l
+            return
+
+
     def keygen(self):
         xi = tv_xi
-        pk, sk = self._keygen_internal(xi)
+        return self._keygen_internal(xi)
+
+    def sign(self, sk: bytearray, M: bytearray, ctx: bytearray = b""):
+
+        if len(ctx) > 255:
+            raise ValueError("ctx length > 255")
+        
+        rnd = tv_rnd
+
+        Mp = bytes([0, len(ctx)]) + ctx + M
+        sign = self._sign_internal(sk, Mp, rnd)
 
 
 inst = my_ml_dsa()
-inst.keygen()
+pk, sk = inst.keygen()
+inst.sign(sk, b"Your message signed by ML_DSA")
+

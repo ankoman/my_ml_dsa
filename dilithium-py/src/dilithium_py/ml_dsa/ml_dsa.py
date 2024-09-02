@@ -266,7 +266,9 @@ class ML_DSA:
 
             # Create challenge polynomial
             w1_bytes = w1.bit_pack_w(self.gamma_2)
+            print(w1_bytes)
             c_tilde = self._h(mu + w1_bytes, self.c_tilde_bytes)
+            print(c_tilde)
             c = self.R.sample_in_ball(c_tilde, self.tau)
             c_hat = c.to_ntt()
 
@@ -351,6 +353,7 @@ class ML_DSA:
             rnd = bytes([0] * 32)
         else:
             rnd = self.random_bytes(32)
+        print(f'rnd: {b2i(rnd):x}')
 
         # Format the message using the context
         m_prime = bytes([0]) + bytes([len(ctx)]) + ctx + m
