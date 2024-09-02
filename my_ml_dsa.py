@@ -67,16 +67,23 @@ def coeffFromHalfByte(b: int, eta: int) -> int or None: # type: ignore
 def integerToBits(x: int, alpha: int):
     return int(bin(x)[2:].zfill(alpha)[::-1], 2) ### Bit reverse
 
-def bitsToBytes(y: int) -> bytearray:
+def bitsToBytes(y: int, bitlen: int) -> bytearray:
     ba = bytearray()
-    y = int(f'{y:02560b}'[::-1], 2) ### Bit reverse
+    y = int(bin(y)[2:].zfill(bitlen * 32 * 8)[::-1], 2)  ### Bit reverse
 
-    for i in range(polyRing.n // 8 * 10):
+    for i in range(polyRing.n // 8 * bitlen):
         ba += bytes([y & 0xff])
         y >>= 8
 
     return ba
 
+def bytesToBits(z: bytearray) -> List(int): # type: ignore
+    list_t = []
+    for x in z:
+        for j in range(8):
+            list_t.append((x >> j) & 0x1)
+
+    return list_t
 
 class polyRing:
     q = 8380417
@@ -145,6 +152,26 @@ class polyRing:
 
         return poly
 
+    @classmethod
+    def sampleInBall(cls, rho: bytearray, tau: int):
+        H = hashlib.shake_256()
+        H.update(rho)
+        s = H.digest(1024)
+        h = bytesToBits(s[:8])
+
+        poly = cls()
+        xof_pos = 8
+        for i in range(256 - tau, 256, 1):
+            j = s[xof_pos]
+            xof_pos +=1
+            while j > i:
+                j = s[xof_pos]
+                xof_pos +=1
+            poly.coeff[i] = poly.coeff[j]
+            poly.coeff[j] = (-1)**h[i-256+tau]
+
+        return poly
+
     def power2round(self) -> (polyRing, polyRing): # type: ignore
         r0_poly = self.__class__()
         r1_poly = self.__class__()
@@ -189,7 +216,7 @@ class polyRing:
             z <<= bitlen
             z |= integerToBits(self.coeff[i], bitlen)
 
-        return bitsToBytes(z)
+        return bitsToBytes(z, bitlen)
 
     def bitPack(self, b: int, bitlen: int) -> bytearray:
         z = 0
@@ -298,7 +325,6 @@ class my_ml_dsa:
         w1_tilde = bytearray()
         for i in range(self.k):
             w1_tilde += w1[i].simpleBitPack(self.bitlen_w1)
-        print(w1_tilde)
         return w1_tilde
     
     def pkEncode(self, rho: bytearray, t1: List(polyRing)) -> bytearray: # type: ignore
@@ -342,6 +368,12 @@ class my_ml_dsa:
         for i in range(self.k):
             for j in range(self.l):
                 prod[i] = prod[i] + (mat[i][j] @ vec[j])
+        return prod
+
+    def scalarVectorNTT(self, scalar: polyRing, vec: List(polyRing)) -> List(polyRing): # type: ignore
+        prod = []
+        for poly in vec:
+            prod.append(scalar @ poly)
         return prod
 
     def _keygen_internal(self, xi: int):
@@ -401,7 +433,14 @@ class my_ml_dsa:
                 w1.append(w1_poly)
 
             c_tilde = hash_H(mu + self.w1Encode(w1), self.c_tilde_bytes)
-            print(c_tilde)
+            c = polyRing.sampleInBall(c_tilde, self.tau)
+            c_hat = c.ntt()
+
+            cs1 = [x.intt() for x in self.scalarVectorNTT(c_hat, s1_hat)]
+            cs2 = [x.intt() for x in self.scalarVectorNTT(c_hat, s2_hat)]
+            z = [y[i] + cs1[i] for i in range(self.l)]
+            print(z)
+            
             kappa += self.l
             return
 

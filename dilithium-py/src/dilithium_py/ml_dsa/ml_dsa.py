@@ -266,16 +266,16 @@ class ML_DSA:
 
             # Create challenge polynomial
             w1_bytes = w1.bit_pack_w(self.gamma_2)
-            print(w1_bytes)
             c_tilde = self._h(mu + w1_bytes, self.c_tilde_bytes)
-            print(c_tilde)
             c = self.R.sample_in_ball(c_tilde, self.tau)
             c_hat = c.to_ntt()
+
 
             # NOTE: unlike FIPS 204 we start again as soon as a vector
             # fails the norm bound to reduce any unneeded computations.
             c_s1 = s1_hat.scale(c_hat).from_ntt()
             z = y + c_s1
+            print(z)
             if z.check_norm_bound(self.gamma_1 - self.beta):
                 continue
 
