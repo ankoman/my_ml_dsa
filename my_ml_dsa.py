@@ -1,5 +1,6 @@
  # export PYTHONPATH="dilithium-py/src:$PYTHONPATH"
 from __future__ import annotations
+from typing import List
 from dilithium_py.ml_dsa import ML_DSA_44
 from test_vectors import *
 import hashlib, copy
@@ -48,7 +49,7 @@ def hash_H(din: bytearray, n_bytes: int) -> bytearray:
     s.update(din)
     return s.digest(n_bytes)
 
-def coeffFromThreeBytes(s: bytearray) -> int or None:
+def coeffFromThreeBytes(s: bytearray) -> int or None: # type: ignore
     val = int.from_bytes(s, "little")
     val &= 0x7FFFFF
     if val < polyRing.q:
@@ -56,7 +57,7 @@ def coeffFromThreeBytes(s: bytearray) -> int or None:
     else:
         return None
 
-def coeffFromHalfByte(b: int, eta: int) -> int or None:
+def coeffFromHalfByte(b: int, eta: int) -> int or None: # type: ignore
     if eta == 2 and b < 15:
         return 2 - (b % 5)
     elif b < 9:
@@ -78,16 +79,6 @@ def bitsToBytes(y: int) -> bytearray:
 
     return ba
 
-
-def simpleBitPack(w: List(int), b: int):
-    ### b is bitlen b
-    z = 0
-    ### 実は逆順の係数を並べてリトルエンディアンにするだけでいい
-    for i in range(polyRing.n):
-        z <<= b
-        z |= integerToBits(w[i], b)
-
-    return bitsToBytes(z)
 
 class polyRing:
     q = 8380417
@@ -115,7 +106,7 @@ class polyRing:
         return tmp
 
     @classmethod
-    def rejNTTPoly(cls, rho: bytearray) -> Tq:
+    def rejNTTPoly(cls, rho: bytearray) -> Tq: # type: ignore
         G = hashlib.shake_128()
         G.update(rho)
         s = G.digest(10000)
@@ -156,7 +147,7 @@ class polyRing:
 
         return poly
 
-    def power2round(self) -> (polyRing, polyRing):
+    def power2round(self) -> (polyRing, polyRing): # type: ignore
         r0_poly = self.__class__()
         r1_poly = self.__class__()
         mask = 2**13 - 1
@@ -174,6 +165,25 @@ class polyRing:
 
         return r1_poly, r0_poly
 
+    def simpleBitPack(self, bitlen: int) -> bytearray:
+        ### bitlen is bitlen b
+        z = 0
+        ### 実は逆順の係数を並べてリトルエンディアンにするだけでいい
+        for i in range(polyRing.n):
+            z <<= bitlen
+            z |= integerToBits(self.coeff[i], bitlen)
+
+        return bitsToBytes(z)
+
+    def bitPack(self, b: int, bitlen: int) -> bytearray:
+        ### b is bitlen b
+        z = 0
+        for coeff in reversed(self.coeff):
+            z <<= bitlen
+            z |= b - coeff
+
+        return z.to_bytes((bitlen*256)//8, 'little')
+    
     def ntt(self):
         ntt = polyRing()
         ### Straightforward
@@ -244,23 +254,22 @@ class my_ml_dsa:
 
         return s1, s2
 
-    def pkEncode(self, rho: bytearray, t1: List(List(int))) -> bytearray:
+    def pkEncode(self, rho: bytearray, t1: List(List(int))) -> bytearray: # type: ignore
         pk = rho
         for i in range(self.k):
-            pk += simpleBitPack(t1[i], 10)
+            pk += t1[i].simpleBitPack(10)
         
         return pk
     
-    def skEncode(self, rho: bytearray, K: bytearray, tr: bytearray, s1: List(polyRing), s2: List(polyRing), t0: List(List(int))) -> bytearray:
+    def skEncode(self, rho: bytearray, K: bytearray, tr: bytearray, s1: List(polyRing), s2: List(polyRing), t0: List(List(int))) -> bytearray: # type: ignore
         sk = rho + K + tr
         for i in range(self.l):
-            sk += BitPack(s1[i], self.eta, self.eta)
+            sk += s1[i].bitPack(self.eta, 3)
         for i in range(self.k):
-            sk += BitPack(s2[i], self.eta, self.eta)
+            sk += s2[i].bitPack(self.eta, 3)
         for i in range(self.k):
-            sk += BitPack(t0[i], )
-
-        return pk
+            sk += t0[i].bitPack(2**12, 13)
+        return sk
 
     def _keygen_internal(self, xi: int):
         hash_in = i2b(xi) + self.k.to_bytes(1, 'little') + self.l.to_bytes(1, 'little')
@@ -286,14 +295,15 @@ class my_ml_dsa:
         t1 = []
         for poly in t:
             t1_poly, t0_poly = poly.power2round()
-            t1.append(t1_poly.coeff)
-            t0.append(t0_poly.coeff)
+            t1.append(t1_poly)
+            t0.append(t0_poly)
 
         pk = self.pkEncode(rho, t1)
         tr = hash_H(pk, 64)
         sk = self.skEncode(rho, K, tr, s1, s2, t0)
         assert b2i(pk) == tv_pk, f'{pk} != {tv_pk:x}' 
         assert b2i(tr) == tv_tr, f'{tr} != {tv_tr:x}' 
+        assert b2i(sk) == tv_sk, f'{sk} != {tv_sk:x}' 
 
         return pk, sk
 

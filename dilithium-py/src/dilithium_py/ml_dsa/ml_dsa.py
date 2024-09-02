@@ -221,6 +221,7 @@ class ML_DSA:
         sk = self._pack_sk(rho, K, tr, s1, s2, t0)
         print(f'pk: {b2i(pk):x}')
         print(f'tr: {b2i(tr):x}')
+        print(f'sk: {b2i(sk):x}')
 
         return pk, sk
 
