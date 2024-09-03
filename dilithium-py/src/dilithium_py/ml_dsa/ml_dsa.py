@@ -275,7 +275,6 @@ class ML_DSA:
             # fails the norm bound to reduce any unneeded computations.
             c_s1 = s1_hat.scale(c_hat).from_ntt()
             z = y + c_s1
-            print(z)
             if z.check_norm_bound(self.gamma_1 - self.beta):
                 continue
 
@@ -360,6 +359,7 @@ class ML_DSA:
 
         # Compute the signature of m_prime
         sig_bytes = self._sign_internal(sk_bytes, m_prime, rnd)
+        print(f'sig: {b2i(sig_bytes):x}')
         return sig_bytes
 
     def verify(self, pk_bytes, m, sig_bytes, ctx=b""):
