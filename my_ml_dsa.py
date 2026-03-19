@@ -1,8 +1,8 @@
  # export PYTHONPATH="dilithium-py/src:$PYTHONPATH"
 from __future__ import annotations
 from typing import List
-from dilithium_py.ml_dsa import ML_DSA_44
-from test_vectors import *
+#from dilithium_py.ml_dsa import ML_DSA_44
+#from test_vectors import *
 import hashlib, copy
 
 zetas = [0, 4808194, 3765607, 3761513, 5178923, 5496691, 5234739, 5178987, 7778734, 3542485, 2682288, 2129892, 3764867, 7375178, 557458, 7159240, 
@@ -23,11 +23,11 @@ zetas = [0, 4808194, 3765607, 3761513, 5178923, 5496691, 5234739, 5178987, 77787
     3123762, 2358373, 6187330, 5365997, 6663603, 2926054, 7987710, 8077412, 3531229, 4405932, 4606686, 1900052, 7598542, 1054478, 7648983]
 
 ### Testvector generation
-print("### Test vector generation ###")
-pk, sk = ML_DSA_44.keygen()
-msg = b"Your message signed by ML_DSA"
-sig = ML_DSA_44.sign(sk, msg)
-assert ML_DSA_44.verify(pk, msg, sig)
+# print("### Test vector generation ###")
+# pk, sk = ML_DSA_44.keygen()
+# msg = b"Your message signed by ML_DSA"
+# sig = ML_DSA_44.sign(sk, msg)
+# assert ML_DSA_44.verify(pk, msg, sig)
 
 # # Verification will fail with the wrong msg or pk
 # assert not ML_DSA_44.verify(pk, b"", sig)
@@ -509,9 +509,9 @@ class my_ml_dsa:
         seeds = hash_H(hash_in, 128)
 
         rho, rho_p, K = seeds[:32], seeds[32:96], seeds[96:]
-        assert b2i(rho) == tv_rho, f'{rho} != {tv_rho:x}'
-        assert b2i(rho_p) == tv_rho_p, f'{rho_p} != {tv_rho_p:x}' 
-        assert b2i(K) == tv_K, f'{K} != {tv_K:x}' 
+        # assert b2i(rho) == tv_rho, f'{rho} != {tv_rho:x}'
+        # assert b2i(rho_p) == tv_rho_p, f'{rho_p} != {tv_rho_p:x}' 
+        # assert b2i(K) == tv_K, f'{K} != {tv_K:x}' 
 
         A_hat = self.expandA(rho)
         s1, s2 = self.expandS(rho_p)
@@ -531,9 +531,9 @@ class my_ml_dsa:
         pk = self.pkEncode(rho, t1)
         tr = hash_H(pk, 64)
         sk = self.skEncode(rho, K, tr, s1, s2, t0)
-        assert b2i(pk) == tv_pk, f'{pk} != {tv_pk:x}' 
-        assert b2i(tr) == tv_tr, f'{tr} != {tv_tr:x}' 
-        assert b2i(sk) == tv_sk, f'{sk} != {tv_sk:x}' 
+        # assert b2i(pk) == tv_pk, f'{pk} != {tv_pk:x}' 
+        # assert b2i(tr) == tv_tr, f'{tr} != {tv_tr:x}' 
+        # assert b2i(sk) == tv_sk, f'{sk} != {tv_sk:x}' 
 
         return pk, sk
 
@@ -582,7 +582,7 @@ class my_ml_dsa:
 
         z = [poly.mod_pm() for poly in z]
         sigma = self.sigEncode(c_tilde, z, h)
-        assert b2i(sigma) == tv_sig, f'{sigma} != {tv_sig:x}' 
+        # assert b2i(sigma) == tv_sig, f'{sigma} != {tv_sig:x}' 
 
         return sigma
     
@@ -609,16 +609,13 @@ class my_ml_dsa:
         return self.inf_norm(z) < self.gamma_1 - self.beta and c_tilde == c_tilde_p
 
 
-    def keygen(self):
-        xi = tv_xi
+    def keygen(self, xi: int):
         return self._keygen_internal(xi)
 
-    def sign(self, sk: bytearray, M: bytearray, ctx: bytearray = b"") -> bytearray:
+    def sign(self, sk: bytearray, M: bytearray, ctx: bytearray = b"", rnd: int = 0) -> bytearray:
         if len(ctx) > 255:
             raise ValueError("ctx length > 255")
         
-        rnd = tv_rnd
-
         Mp = bytes([0, len(ctx)]) + ctx + M
         sig = self._sign_internal(sk, Mp, rnd)
 
@@ -631,9 +628,51 @@ class my_ml_dsa:
         Mp = bytes([0, len(ctx)]) + ctx + M
         return self._verify_internal(pk, Mp, sig)
 
-inst = my_ml_dsa()
-pk, sk = inst.keygen()
-sig = inst.sign(sk, b"Your message signed by ML_DSA")
-res = inst.verify(pk, b"Your message signed by ML_DSA", sig)
-print(res)
+from collections import namedtuple
+TV = namedtuple('TV', ['xi', 'rng', 'seed', 'pk', 'sk', 'msg', 'mlen', 'sm', 'smlen', 'ctx'])
 
+def get_test_vectors(f):
+    if not f.readline().startswith("count = "):
+        raise ValueError("Invalid test vector format")
+
+    xi = int(f.readline().split(" = ")[1], 16)
+    rng = int(f.readline().split(" = ")[1], 16)
+    seed = bytes.fromhex(f.readline().split(" = ")[1])
+    pk = bytes.fromhex(f.readline().split(" = ")[1])
+    sk = bytes.fromhex(f.readline().split(" = ")[1])
+    msg = bytes.fromhex(f.readline().split(" = ")[1])
+    mlen = int(f.readline().split(" = ")[1])
+    sm = bytes.fromhex(f.readline().split(" = ")[1])
+    smlen = int(f.readline().split(" = ")[1])
+    ctx = bytes.fromhex(f.readline().split(" = ")[1])
+
+    return TV(xi, rng, seed, pk, sk, msg, mlen, sm, smlen, ctx)
+
+def test_KAT(n: int):
+    inst = my_ml_dsa()
+    with open("./KAT/MLDSA/kat_MLDSA_44_hedged_pure.rsp", "r") as f:
+        for i in range(7,n):
+            print(f"Testing vector {i}...")
+            tv = get_test_vectors(f)
+            pk, sk = inst.keygen(tv.xi)
+            assert pk == tv.pk, f'{pk} != {tv.pk}'
+            assert sk == tv.sk, f'{sk} != {tv.sk}'
+            sig = inst.sign(sk, tv.msg, tv.ctx, tv.rng)
+            assert sig + tv.msg == tv.sm, f'{sig + tv.msg} != {tv.sm}'
+
+            res = inst.verify(pk, tv.msg, sig, tv.ctx)
+            print(f"Verification result: {res}")
+
+
+
+    print(f"All {n} test vectors passed!")
+            
+def main():
+    inst = my_ml_dsa()
+    pk, sk = inst.keygen()
+    sig = inst.sign(sk, b"aaa")
+    res = inst.verify(pk, b"aaa", sig)
+    print(res)
+
+if __name__ == "__main__":
+    test_KAT(100)
