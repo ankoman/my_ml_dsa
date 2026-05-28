@@ -34,8 +34,10 @@ zetas = [0, 4808194, 3765607, 3761513, 5178923, 5496691, 5234739, 5178987, 77787
 # pk_new, sk_new = ML_DSA_44.keygen()
 # assert not ML_DSA_44.verify(pk_new, msg, sig)
 
-def i2b(val: int) -> bytearray:
-    return val.to_bytes((val.bit_length()+7)//8, 'big')
+def i2b(val: int, length: int = 32) -> bytearray:
+    if val < 0:
+        raise ValueError("Cannot convert negative integer to bytes")
+    return val.to_bytes(length, 'big')
 
 def b2i(val: bytearray) -> str:
     return int.from_bytes(val, 'big')
@@ -496,16 +498,17 @@ class my_ml_dsa:
 
     def inf_norm(self, vec: List(polyRing)) -> int: # type: ignore
         list_elem = []
+        ### flatten
         for poly in vec:
             list_elem += poly.coeff
 
         half = (self.q - 1)//2
-        list_elem = [abs(elem - self.q) if elem > half else elem for elem in list_elem]
+        list_elem = [abs(elem - self.q) if elem > half else abs(elem) for elem in list_elem]
 
         return max(list_elem)
 
     def _keygen_internal(self, xi: int):
-        hash_in = i2b(xi) + self.k.to_bytes(1, 'little') + self.l.to_bytes(1, 'little')
+        hash_in = i2b(xi, 32) + self.k.to_bytes(1, 'little') + self.l.to_bytes(1, 'little')
         seeds = hash_H(hash_in, 128)
 
         rho, rho_p, K = seeds[:32], seeds[32:96], seeds[96:]
@@ -544,7 +547,7 @@ class my_ml_dsa:
         t0_hat = [x.ntt() for x in t0]
         A_hat = self.expandA(rho)
         mu = hash_H(tr + Mp, 64)
-        rho_pp = hash_H(K + i2b(rnd) + mu, 64)
+        rho_pp = hash_H(K + i2b(rnd, 32) + mu, 64)
 
         kappa = 0
         z, h = None, None
@@ -569,7 +572,6 @@ class my_ml_dsa:
             ### LowBits
             r0 = [poly.lowBits(self.gamma_2) for poly in wcs]
 
-
             ### Validity check
             if self.inf_norm(z) >= self.gamma_1 - self.beta or self.inf_norm(r0) >= self.gamma_2 - self.beta:
                 z, h = None, None
@@ -583,7 +585,6 @@ class my_ml_dsa:
         z = [poly.mod_pm() for poly in z]
         sigma = self.sigEncode(c_tilde, z, h)
         # assert b2i(sigma) == tv_sig, f'{sigma} != {tv_sig:x}' 
-
         return sigma
     
     def _verify_internal(self, pk: bytearray, Mp: bytearray, sig: bytearray) -> bool:
@@ -651,9 +652,11 @@ def get_test_vectors(f):
 def test_KAT(n: int):
     inst = my_ml_dsa()
     with open("./KAT/MLDSA/kat_MLDSA_44_hedged_pure.rsp", "r") as f:
-        for i in range(7,n):
-            print(f"Testing vector {i}...")
+        for i in range(n):
             tv = get_test_vectors(f)
+            if i < 0:
+                continue
+            print(f"Testing vector {i}...")
             pk, sk = inst.keygen(tv.xi)
             assert pk == tv.pk, f'{pk} != {tv.pk}'
             assert sk == tv.sk, f'{sk} != {tv.sk}'
@@ -662,8 +665,6 @@ def test_KAT(n: int):
 
             res = inst.verify(pk, tv.msg, sig, tv.ctx)
             print(f"Verification result: {res}")
-
-
 
     print(f"All {n} test vectors passed!")
             
