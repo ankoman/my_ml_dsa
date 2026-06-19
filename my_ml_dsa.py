@@ -1,9 +1,12 @@
  # export PYTHONPATH="dilithium-py/src:$PYTHONPATH"
 from __future__ import annotations
+import random
 from typing import List
 #from dilithium_py.ml_dsa import ML_DSA_44
 #from test_vectors import *
-import hashlib, copy
+import hashlib, copy, pickle
+import numpy as np
+import matplotlib.pyplot as plt
 
 zetas = [0, 4808194, 3765607, 3761513, 5178923, 5496691, 5234739, 5178987, 7778734, 3542485, 2682288, 2129892, 3764867, 7375178, 557458, 7159240, 
    5010068, 4317364, 2663378, 6705802, 4855975, 7946292, 676590, 7044481, 5152541, 1714295, 2453983, 1460718, 7737789, 4795319, 2815639, 2283733,
@@ -112,7 +115,15 @@ class polyRing:
         for i in range(self.n):
             tmp.coeff[i] = (self.coeff[i] + other.coeff[i]) % self.q ### reduction
         return tmp
-
+    
+    def __mul__(self, other):
+        if not isinstance(other, int):
+            return NotImplemented
+        tmp = self.__class__()
+        for i in range(self.n):
+            tmp.coeff[i] = (self.coeff[i] * other) % self.q ### reduction
+        return tmp
+    
     def __sub__(self, other):
         tmp = self.__class__()
         for i in range(self.n):
@@ -133,6 +144,11 @@ class polyRing:
 
         return tmp
 
+    def __eq__(self, other):
+        if not isinstance(other, polyRing):
+            return NotImplemented
+        return self.coeff == other.coeff
+    
     def mod_pm(self) -> polyRing:
         tmp = self.__class__()
         half = (self.q-1)//2
@@ -494,7 +510,7 @@ class my_ml_dsa:
         prod = []
         for poly in vec:
             prod.append(scalar @ poly)
-        return prod
+        return np.array(prod)
 
     def inf_norm(self, vec: List(polyRing)) -> int: # type: ignore
         list_elem = []
@@ -667,7 +683,159 @@ def test_KAT(n: int):
             print(f"Verification result: {res}")
 
     print(f"All {n} test vectors passed!")
-            
+
+class my_ml_dsa_attack(my_ml_dsa):
+    def _keygen_internal_attack(self, xi: int):
+        hash_in = i2b(xi, 32) + self.k.to_bytes(1, 'little') + self.l.to_bytes(1, 'little')
+        seeds = hash_H(hash_in, 128)
+
+        rho, rho_p, K = seeds[:32], seeds[32:96], seeds[96:]
+        # assert b2i(rho) == tv_rho, f'{rho} != {tv_rho:x}'
+        # assert b2i(rho_p) == tv_rho_p, f'{rho_p} != {tv_rho_p:x}' 
+        # assert b2i(K) == tv_K, f'{K} != {tv_K:x}' 
+
+        A_hat = self.expandA(rho)
+        s1, s2 = self.expandS(rho_p)
+        s1_hat = [x.ntt() for x in s1]
+
+        As = self.matrix_vector_mult(A_hat, s1_hat)
+        t = [As[i].intt() + s2[i] for i in range(self.k)]
+
+        ### Power2Round
+        t0 = []
+        t1 = []
+        for poly in t:
+            t1_poly, t0_poly = poly.power2round()
+            t1.append(t1_poly)
+            t0.append(t0_poly)
+
+        pk = self.pkEncode(rho, t1)
+        tr = hash_H(pk, 64)
+        sk = self.skEncode(rho, K, tr, s1, s2, t0)
+        # assert b2i(pk) == tv_pk, f'{pk} != {tv_pk:x}' 
+        # assert b2i(tr) == tv_tr, f'{tr} != {tv_tr:x}' 
+        # assert b2i(sk) == tv_sk, f'{sk} != {tv_sk:x}' 
+
+        return pk, sk, A_hat, t, t1, t0, s2
+    
+    def _sign_internal_attack(self, sk: bytearray, Mp: bytearray, rnd: int):
+        rho, K, tr, s1, s2, t0 = self.skDecode(sk)
+        s1_hat = [x.ntt() for x in s1]
+        s2_hat = [x.ntt() for x in s2]
+        t0_hat = [x.ntt() for x in t0]
+        A_hat = self.expandA(rho)
+        mu = hash_H(tr + Mp, 64)
+        rho_pp = hash_H(K + i2b(rnd, 32) + mu, 64)
+
+        kappa = 0
+        z, h = None, None
+        while z is None and h is None:
+            y = self.expandMask(rho_pp, kappa)
+            y_hat = [elem.ntt() for elem in y]
+            w_hat = self.matrix_vector_mult(A_hat, y_hat)
+            w = [elem.intt() for elem in w_hat]
+
+            ### HighBits
+            w1 = [poly.highBits(self.gamma_2) for poly in w]
+            w0 = [poly.lowBits(self.gamma_2) for poly in w]
+
+            c_tilde = hash_H(mu + self.w1Encode(w1), self.c_tilde_bytes)
+            c = polyRing.sampleInBall(c_tilde, self.tau)
+            c_hat = c.ntt()
+
+            cs1 = [x.intt() for x in self.scalarVectorNTT(c_hat, s1_hat)]
+            cs2 = [x.intt() for x in self.scalarVectorNTT(c_hat, s2_hat)]
+            z = [y[i] + cs1[i] for i in range(self.l)]
+
+            wcs = [w[i] - cs2[i] for i in range(self.k)]
+            ### LowBits
+            r0 = [poly.lowBits(self.gamma_2) for poly in wcs]
+
+            ### Validity check
+            if self.inf_norm(z) >= self.gamma_1 - self.beta or self.inf_norm(r0) >= self.gamma_2 - self.beta:
+                z, h = None, None
+            else:
+                ct0 = [x.intt() for x in self.scalarVectorNTT(c_hat, t0_hat)]
+                h = [polyRing.makeHint(-ct0[i], w[i] - cs2[i] + ct0[i], self.gamma_2) for i in range(self.k)]
+                if self.inf_norm(ct0) > self.gamma_2 or sum([sum(poly.coeff) for poly in h]) > self.omega:
+                    z, h = None, None
+            kappa += self.l
+
+        z = [poly.mod_pm() for poly in z]
+        sigma = self.sigEncode(c_tilde, z, h)
+        # assert b2i(sigma) == tv_sig, f'{sigma} != {tv_sig:x}' 
+        return sigma, z, w, c_hat, cs1, cs2, w1, w0, h
+    
+def gen_attack_trace(t0_known: bool = False):
+
+    with open("traces_t0_unknown_100.pkl", "wb") as fout:
+        inst = my_ml_dsa_attack()
+        xi = random.randint(0, 2**256-1)
+        pk, sk, A_hat, t, t1, t0, s2 = inst._keygen_internal_attack(xi)
+        pickle.dump(t0, fout)
+        pickle.dump(s2, fout)
+
+        for i in range(100):
+            print(i)
+            msg = random.randbytes(32)
+            rng = random.randint(0, 2**256-1)
+            sig, z, w, c_hat, cs1, cs2, w1, w0, h = inst._sign_internal_attack(sk, msg, rng)
+
+            z_hat = [elem.ntt() for elem in z]
+            Az_hat = inst.matrix_vector_mult(A_hat, z_hat)
+            Az = [elem.intt() for elem in Az_hat]
+
+            t_hat = [elem.ntt() for elem in t]
+            ct = [x.intt() for x in inst.scalarVectorNTT(c_hat, t_hat)]
+
+            # lhs = np.array(Az) - np.array(ct)
+            # rhs = np.array(w) - np.array(cs2)
+            # assert (lhs == rhs).all(), 'fail'   ### Check Az - ct = w - cs2
+
+            # t1_hat = [elem.ntt() for elem in (np.array(t1) << 13)]
+            # ct1 = [x.intt() for x in inst.scalarVectorNTT(c_hat, t1_hat)]
+            t0_hat = [elem.ntt() for elem in np.array(t0)]
+            ct0 = [x.intt() for x in inst.scalarVectorNTT(c_hat, t0_hat)]
+
+            pickle.dump(w0, fout)
+            pickle.dump(c_hat.intt(), fout)
+            if t0_known:        
+                x_D = np.array(Az) - np.array(ct) - (np.array(w1) * 2 * inst.gamma_2)
+                assert (np.array(w0) - x_D == np.array(cs2)).all(), "Assertion failed"
+                pickle.dump(x_D, fout)
+            else:
+                x_D = np.array(Az) - np.array(ct) - (np.array(w1) * 2 * inst.gamma_2) + ct0
+                Azct1_low = [poly.lowBits(inst.gamma_2) for poly in np.array(Az) - np.array(ct) + ct0]
+                assert (np.array(w0) - x_D == np.array(cs2) - np.array(ct0)).all(), "Assertion failed"
+                pickle.dump(x_D, fout)
+                pickle.dump(Azct1_low, fout)
+                pickle.dump(h, fout)
+
+
+        # lhs = np.array(Az) - np.array(ct1) - w  ### Az - ct1 - w
+        # rhs = np.array(ct0) - np.array(cs2) ### ct0 - cs2 
+
+        # flat = []
+        # for i in range(4):
+        #     for j in range(256):
+        #         val = lhs[i].coeff[j]
+        #         val = val - inst.q if val > (inst.q - 1)//2 else val
+        #         flat.append(val)
+
+        # print(flat)
+        # max_abs = max(abs(x) for x in flat)
+        # print(max_abs)
+        # plt.hist(flat, bins=50, density=True)
+        # mu = 0
+        # sigma = 14768
+        # x = np.linspace(min(flat), max(flat), 1000)
+        # y = (1 / (sigma * np.sqrt(2 * np.pi))) * \
+        #     np.exp(-((x - mu) ** 2) / (2 * sigma ** 2))
+        # plt.plot(x, y)
+        # plt.xlabel("value")
+        # plt.ylabel("frequency")
+        # plt.savefig("hist.png")
+
 def main():
     inst = my_ml_dsa()
     pk, sk = inst.keygen()
@@ -676,4 +844,5 @@ def main():
     print(res)
 
 if __name__ == "__main__":
-    test_KAT(100)
+    #test_KAT(100)
+    gen_attack_trace()
