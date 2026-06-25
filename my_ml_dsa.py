@@ -1,6 +1,6 @@
  # export PYTHONPATH="dilithium-py/src:$PYTHONPATH"
 from __future__ import annotations
-import random
+import random, sys
 from typing import List
 #from dilithium_py.ml_dsa import ML_DSA_44
 #from test_vectors import *
@@ -765,18 +765,36 @@ class my_ml_dsa_attack(my_ml_dsa):
         sigma = self.sigEncode(c_tilde, z, h)
         # assert b2i(sigma) == tv_sig, f'{sigma} != {tv_sig:x}' 
         return sigma, z, w, c_hat, cs1, cs2, w1, w0, h
-    
-def gen_attack_trace(t0_known: bool = False):
 
-    with open("traces_t0_unknown_100.pkl", "wb") as fout:
+def check_hint(cs2_ct0, h, Azct1_low, beta, B, C):
+    for i in range(4):
+        for j in range(256):
+            h_ij = h[i][j]
+            Azct1_low_ij = Azct1_low[i][j]
+            x_ij = cs2_ct0[i][j]
+            if h_ij == 0:
+                x_min = -beta - B - Azct1_low_ij
+                x_max =  beta + B - Azct1_low_ij
+                assert x_min <= x_ij, "assert 1"
+                assert x_max >= x_ij, f"{x_max}, {x_ij}"
+            elif Azct1_low_ij > 0:
+                x_min = -beta + C - Azct1_low_ij
+                assert x_min <= x_ij, "assert 3"
+            else:
+                x_max = beta - C - Azct1_low_ij
+                assert x_max >= x_ij, "assert 4"
+
+def gen_attack_trace(num: int = 0, t0_known: bool = False):
+
+    with open(f"traces_t0_known_1000_{num}.pkl", "wb") as fout:
         inst = my_ml_dsa_attack()
         xi = random.randint(0, 2**256-1)
         pk, sk, A_hat, t, t1, t0, s2 = inst._keygen_internal_attack(xi)
         pickle.dump(t0, fout)
         pickle.dump(s2, fout)
 
-        for i in range(100):
-            print(i)
+        for i in range(1000):
+            #print(i)
             msg = random.randbytes(32)
             rng = random.randint(0, 2**256-1)
             sig, z, w, c_hat, cs1, cs2, w1, w0, h = inst._sign_internal_attack(sk, msg, rng)
@@ -792,8 +810,8 @@ def gen_attack_trace(t0_known: bool = False):
             # rhs = np.array(w) - np.array(cs2)
             # assert (lhs == rhs).all(), 'fail'   ### Check Az - ct = w - cs2
 
-            # t1_hat = [elem.ntt() for elem in (np.array(t1) << 13)]
-            # ct1 = [x.intt() for x in inst.scalarVectorNTT(c_hat, t1_hat)]
+            t1_hat = [elem.ntt() for elem in (np.array(t1) << 13)]
+            ct1 = [x.intt() for x in inst.scalarVectorNTT(c_hat, t1_hat)]
             t0_hat = [elem.ntt() for elem in np.array(t0)]
             ct0 = [x.intt() for x in inst.scalarVectorNTT(c_hat, t0_hat)]
 
@@ -805,7 +823,10 @@ def gen_attack_trace(t0_known: bool = False):
                 pickle.dump(x_D, fout)
             else:
                 x_D = np.array(Az) - np.array(ct) - (np.array(w1) * 2 * inst.gamma_2) + ct0
-                Azct1_low = [poly.lowBits(inst.gamma_2) for poly in np.array(Az) - np.array(ct) + ct0]
+                Azct1_low = [poly.lowBits(inst.gamma_2) for poly in np.array(Az) - np.array(ct1)]
+                ct0_centered = np.array([p.mod_pm() for p in ct0])
+                cs2_centered = np.array([p.mod_pm() for p in cs2])
+                check_hint([poly.mod_pm() for poly in cs2_centered - ct0_centered], h, Azct1_low, 2*39, inst.gamma_2 - 2*39 - 1, inst.gamma_2 + 2*39 + 1)
                 assert (np.array(w0) - x_D == np.array(cs2) - np.array(ct0)).all(), "Assertion failed"
                 pickle.dump(x_D, fout)
                 pickle.dump(Azct1_low, fout)
@@ -845,4 +866,6 @@ def main():
 
 if __name__ == "__main__":
     #test_KAT(100)
-    gen_attack_trace()
+    num = sys.argv[1]  # 0番目はスクリプト名
+    print(num)
+    gen_attack_trace(int(num), True)
