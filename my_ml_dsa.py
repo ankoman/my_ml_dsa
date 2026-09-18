@@ -871,7 +871,7 @@ def gen_attack_trace(n_traces: int = 100, num_sk: int = 0, t0_known: bool = Fals
                 Azct1_low = [poly.lowBits(inst.gamma_2) for poly in np.array(Az) - np.array(ct1)]
                 ct0_centered = np.array([p.mod_pm() for p in ct0])
                 cs2_centered = np.array([p.mod_pm() for p in cs2])
-                check_hint([poly.mod_pm() for poly in cs2_centered - ct0_centered], h, Azct1_low, 2*inst.tau, inst.gamma_2 - 2*insta.tau - 1, inst.gamma_2 + 2*insta.tau + 1)
+                check_hint([poly.mod_pm() for poly in cs2_centered - ct0_centered], h, Azct1_low, 2*inst.tau, inst.gamma_2 - 2*inst.tau - 1, inst.gamma_2 + 2*inst.tau + 1)
                 assert (np.array(w0) - x_D == np.array(cs2) - np.array(ct0)).all(), "Assertion failed"
                 pickle.dump(x_D, fout)
                 pickle.dump(Azct1_low, fout)
