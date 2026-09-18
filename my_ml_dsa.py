@@ -826,10 +826,10 @@ def check_hint(cs2_ct0, h, Azct1_low, beta, B, C):
                 x_max = beta - C - Azct1_low_ij
                 assert x_max >= x_ij, "assert 4"
 
-def gen_attack_trace(num: int = 0, t0_known: bool = False):
+def gen_attack_trace(num: int = 0, t0_known: bool = False, level: int = 2):
 
-    with open(f"traces_t0_unknown_1000_{num}.pkl", "wb") as fout:
-        inst = my_ml_dsa_attack()
+    with open(f"traces_level{level}_t0_{'known' if t0_known else 'unknown'}_1000_{num}.pkl", "wb") as fout:
+        inst = my_ml_dsa_attack(level)
         xi = random.randint(0, 2**256-1)
         pk, sk, A_hat, t, t1, t0, s2 = inst._keygen_internal_attack(xi)
         pickle.dump(t0, fout)
@@ -871,7 +871,7 @@ def gen_attack_trace(num: int = 0, t0_known: bool = False):
                 Azct1_low = [poly.lowBits(inst.gamma_2) for poly in np.array(Az) - np.array(ct1)]
                 ct0_centered = np.array([p.mod_pm() for p in ct0])
                 cs2_centered = np.array([p.mod_pm() for p in cs2])
-                check_hint([poly.mod_pm() for poly in cs2_centered - ct0_centered], h, Azct1_low, 2*39, inst.gamma_2 - 2*39 - 1, inst.gamma_2 + 2*39 + 1)
+                check_hint([poly.mod_pm() for poly in cs2_centered - ct0_centered], h, Azct1_low, 2*inst.tau, inst.gamma_2 - 2*insta.tau - 1, inst.gamma_2 + 2*insta.tau + 1)
                 assert (np.array(w0) - x_D == np.array(cs2) - np.array(ct0)).all(), "Assertion failed"
                 pickle.dump(x_D, fout)
                 pickle.dump(Azct1_low, fout)
@@ -910,7 +910,9 @@ def main():
     print(res)
 
 if __name__ == "__main__":
-    test_KAT(100, 5)
-    # num = sys.argv[1]  # 0番目はスクリプト名
-    # print(num)
-    # gen_attack_trace(int(num), False)
+    # test_KAT(100, 5)
+    t0_known = True if sys.argv[1] == '1' else False if sys.argv[1] == '0' else None
+    num_sk = int(sys.argv[2])
+    level = int(sys.argv[3])
+    print(t0_known, num_sk, level)
+    gen_attack_trace(num_sk, t0_known, level)
