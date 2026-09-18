@@ -826,16 +826,16 @@ def check_hint(cs2_ct0, h, Azct1_low, beta, B, C):
                 x_max = beta - C - Azct1_low_ij
                 assert x_max >= x_ij, "assert 4"
 
-def gen_attack_trace(num: int = 0, t0_known: bool = False, level: int = 2):
+def gen_attack_trace(n_traces: int = 100, num_sk: int = 0, t0_known: bool = False, level: int = 2):
 
-    with open(f"traces_level{level}_t0_{'known' if t0_known else 'unknown'}_1000_{num}.pkl", "wb") as fout:
+    with open(f"traces_level{level}_t0_{'known' if t0_known else 'unknown'}_{n_traces}_{num_sk}.pkl", "wb") as fout:
         inst = my_ml_dsa_attack(level)
         xi = random.randint(0, 2**256-1)
         pk, sk, A_hat, t, t1, t0, s2 = inst._keygen_internal_attack(xi)
         pickle.dump(t0, fout)
         pickle.dump(s2, fout)
 
-        for i in range(1000):
+        for i in range(n_traces):
             #print(i)
             msg = random.randbytes(32)
             rng = random.randint(0, 2**256-1)
@@ -914,5 +914,7 @@ if __name__ == "__main__":
     t0_known = True if sys.argv[1] == '1' else False if sys.argv[1] == '0' else None
     num_sk = int(sys.argv[2])
     level = int(sys.argv[3])
-    print(t0_known, num_sk, level)
-    gen_attack_trace(num_sk, t0_known, level)
+    n_traces = int(sys.argv[4])
+
+    print(f"{t0_known=}, {num_sk=}, {level=} {n_traces=}")
+    gen_attack_trace(n_traces, num_sk, t0_known, level)
