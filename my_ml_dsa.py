@@ -176,7 +176,7 @@ class polyRing:
     def rejBoundedPoly(cls, rho: bytearray, eta: int):
         H = hashlib.shake_256()
         H.update(rho)
-        s = H.digest(256)
+        s = H.digest(1024)
 
         poly = cls()
         i = 0
@@ -370,21 +370,52 @@ class polyRing:
 
 
 class my_ml_dsa:
-    def __init__(self):
-        ### ML_DSA_44
+    def __init__(self, level):
         self.q = 8380417
         self.d = 13  # number of bits dropped from t
-        self.tau = 39  # number of ±1 in c
-        self.gamma_1 = 131072  # coefficient range of y: 2^17
-        self.bitlen_gamma_1 = 17
-        self.gamma_2 = 95232  # low order rounding range: (q-1)/88
-        self.bitlen_w1 = len(bin(((self.q-1) // (2*self.gamma_2)) - 1)) - 2 # 6 or 5
-        self.k = 4  # Dimensions of A = (k, l)
-        self.l = 4  # Dimensions of A = (k, l)
-        self.eta = 2  # Private key range
-        self.omega = 80  # Max number of ones in hint
-        self.beta = self.tau * self.eta
-        self.c_tilde_bytes = 32
+
+        if level == 2:
+            ### ML_DSA_44
+            self.tau = 39  # number of ±1 in c
+            self.gamma_1 = 131072  # coefficient range of y: 2^17
+            self.bitlen_gamma_1 = 17
+            self.gamma_2 = 95232  # low order rounding range: (q-1)/88
+            self.bitlen_w1 = len(bin(((self.q-1) // (2*self.gamma_2)) - 1)) - 2 # 6 or 5
+            self.k = 4  # Dimensions of A = (k, l)
+            self.l = 4  # Dimensions of A = (k, l)
+            self.eta = 2  # Private key range
+            self.omega = 80  # Max number of ones in hint
+            self.beta = self.tau * self.eta
+            self.c_tilde_bytes = 32 # lambda/4
+        elif level == 3:
+            ### ML_DSA_65
+            self.tau = 49  # number of ±1 in c
+            self.gamma_1 = 2**19  # coefficient range of y: 2^19
+            self.bitlen_gamma_1 = 19
+            self.gamma_2 = (self.q-1)//32  # low order rounding range: (q-1)/32
+            self.bitlen_w1 = len(bin(((self.q-1) // (2*self.gamma_2)) - 1)) - 2 # 6 or 5
+            self.k = 6  # Dimensions of A = (k, l)
+            self.l = 5  # Dimensions of A = (k, l)
+            self.eta = 4  # Private key range
+            self.omega = 55  # Max number of ones in hint
+            self.beta = self.tau * self.eta
+            self.c_tilde_bytes = 48 # lambda/4
+        elif level == 5:
+            ### ML_DSA_87
+            self.tau = 60  # number of ±1 in c
+            self.gamma_1 = 2**19  # coefficient range of y: 2^19
+            self.bitlen_gamma_1 = 19
+            self.gamma_2 = (self.q-1)//32  # low order rounding range: (q-1)/32
+            self.bitlen_w1 = len(bin(((self.q-1) // (2*self.gamma_2)) - 1)) - 2 # 6 or 5
+            self.k = 8  # Dimensions of A = (k, l)
+            self.l = 7  # Dimensions of A = (k, l)
+            self.eta = 2  # Private key range
+            self.omega = 75  # Max number of ones in hint
+            self.beta = self.tau * self.eta
+            self.c_tilde_bytes = 64 # lambda/4
+        else:
+            print("Security level not defined.")
+            exit(-1)
 
     def expandA(self, rho: bytearray) -> List(polyRing): # type: ignore
         A_hat = []
@@ -452,7 +483,7 @@ class my_ml_dsa:
         s_bytes = 96 if self.eta == 2 else 128
         s1_offset = 128
         s2_offset = 128 + self.l * s_bytes
-        t0_offset = 128 + 2*(self.l * s_bytes)
+        t0_offset = 128 + (self.l + self.k) * s_bytes
         bitlen = 3 if self.eta == 2 else 4 if self.eta == 4 else None
 
         s1 = [polyRing.bitUnpack(sk[s1_offset+i*s_bytes:], self.eta, bitlen) for i in range(self.l)]
@@ -594,7 +625,7 @@ class my_ml_dsa:
             else:
                 ct0 = [x.intt() for x in self.scalarVectorNTT(c_hat, t0_hat)]
                 h = [polyRing.makeHint(-ct0[i], w[i] - cs2[i] + ct0[i], self.gamma_2) for i in range(self.k)]
-                if self.inf_norm(ct0) > self.gamma_2 or sum([sum(poly.coeff) for poly in h]) > self.omega:
+                if self.inf_norm(ct0) >= self.gamma_2 or sum([sum(poly.coeff) for poly in h]) > self.omega:
                     z, h = None, None
             kappa += self.l
 
@@ -665,9 +696,20 @@ def get_test_vectors(f):
 
     return TV(xi, rng, seed, pk, sk, msg, mlen, sm, smlen, ctx)
 
-def test_KAT(n: int):
-    inst = my_ml_dsa()
-    with open("./KAT/MLDSA/kat_MLDSA_44_hedged_pure.rsp", "r") as f:
+def test_KAT(n: int, level: int):
+    print(f"Test Category {level}")
+    inst = my_ml_dsa(level)
+    path = ""
+    if level == 2:
+        path = "./KAT/MLDSA/kat_MLDSA_44_hedged_pure.rsp"
+    elif level == 3:
+        path = "./KAT/MLDSA/kat_MLDSA_65_hedged_pure.rsp"
+    elif level == 5:
+        path = "./KAT/MLDSA/kat_MLDSA_87_hedged_pure.rsp"
+    else:
+        exit(-1)
+
+    with open(path, "r") as f:
         for i in range(n):
             tv = get_test_vectors(f)
             if i < 0:
@@ -764,7 +806,7 @@ class my_ml_dsa_attack(my_ml_dsa):
         z = [poly.mod_pm() for poly in z]
         sigma = self.sigEncode(c_tilde, z, h)
         # assert b2i(sigma) == tv_sig, f'{sigma} != {tv_sig:x}' 
-        return sigma, z, w, c_hat, cs1, cs2, w1, w0, h
+        return sigma, z, w, c_hat, cs1, cs2, w1, w0, w, h
 
 def check_hint(cs2_ct0, h, Azct1_low, beta, B, C):
     for i in range(4):
@@ -786,7 +828,7 @@ def check_hint(cs2_ct0, h, Azct1_low, beta, B, C):
 
 def gen_attack_trace(num: int = 0, t0_known: bool = False):
 
-    with open(f"traces_t0_known_1000_{num}.pkl", "wb") as fout:
+    with open(f"traces_t0_unknown_1000_{num}.pkl", "wb") as fout:
         inst = my_ml_dsa_attack()
         xi = random.randint(0, 2**256-1)
         pk, sk, A_hat, t, t1, t0, s2 = inst._keygen_internal_attack(xi)
@@ -797,7 +839,7 @@ def gen_attack_trace(num: int = 0, t0_known: bool = False):
             #print(i)
             msg = random.randbytes(32)
             rng = random.randint(0, 2**256-1)
-            sig, z, w, c_hat, cs1, cs2, w1, w0, h = inst._sign_internal_attack(sk, msg, rng)
+            sig, z, w, c_hat, cs1, cs2, w1, w0, w, h = inst._sign_internal_attack(sk, msg, rng)
 
             z_hat = [elem.ntt() for elem in z]
             Az_hat = inst.matrix_vector_mult(A_hat, z_hat)
@@ -815,7 +857,10 @@ def gen_attack_trace(num: int = 0, t0_known: bool = False):
             t0_hat = [elem.ntt() for elem in np.array(t0)]
             ct0 = [x.intt() for x in inst.scalarVectorNTT(c_hat, t0_hat)]
 
+            pickle.dump(w, fout)
+            pickle.dump(w1, fout)
             pickle.dump(w0, fout)
+
             pickle.dump(c_hat.intt(), fout)
             if t0_known:        
                 x_D = np.array(Az) - np.array(ct) - (np.array(w1) * 2 * inst.gamma_2)
@@ -865,7 +910,7 @@ def main():
     print(res)
 
 if __name__ == "__main__":
-    #test_KAT(100)
-    num = sys.argv[1]  # 0番目はスクリプト名
-    print(num)
-    gen_attack_trace(int(num), True)
+    test_KAT(100, 5)
+    # num = sys.argv[1]  # 0番目はスクリプト名
+    # print(num)
+    # gen_attack_trace(int(num), False)
